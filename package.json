@@ -3,15 +3,15 @@
   "version": "1.0.0",
   "description": "Stock Chart PWA",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "yahoo-finance2": "^2.8.1"
+    "express": "^4.18.2"
   },
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   }
 }

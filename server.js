@@ -1,15 +1,22 @@
-const express = require('express');
-const cors = require('cors');
-const yahooFinance = require('yahoo-finance2').default;
-const path = require('path');
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Setup file paths for ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Your Twelve Data API Key
+const API_KEY = '3dca03d1de204312874e027e212e654d';
+
 app.use(cors());
 app.use(express.static('public'));
 
-// API Endpoint to get stock history
+// API Endpoint
 app.get('/api/stock', async (req, res) => {
     try {
         const { symbol, years } = req.query;
@@ -18,34 +25,44 @@ app.get('/api/stock', async (req, res) => {
             return res.status(400).json({ error: 'Symbol is required' });
         }
 
-        const queryOptions = { period1: '2020-01-01', interval: '1wk' };
-        
-        // Calculate start date based on years requested
-        const endDate = new Date();
+        // 1. Calculate Start Date
+        // We want data starting from X years ago
         const startDate = new Date();
-        startDate.setFullYear(endDate.getFullYear() - (parseInt(years) || 1));
+        startDate.setFullYear(startDate.getFullYear() - (parseInt(years) || 1));
+        const dateStr = startDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
 
-        const result = await yahooFinance.historical(symbol, {
-            period1: startDate,
-            period2: endDate,
-            interval: '1wk' // Weekly data
-        });
+        // 2. Fetch Data from Twelve Data
+        // Interval: 1week
+        const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1week&start_date=${dateStr}&apikey=${API_KEY}`;
+        
+        console.log(`Fetching: ${symbol} from ${dateStr}`);
+        
+        const response = await fetch(url);
+        const data = await response.json();
 
-        // Format data for Chart.js
+        // 3. Handle Errors (Twelve Data returns 200 OK even on error, so check body)
+        if (data.status === 'error' || !data.values) {
+            throw new Error(data.message || 'Invalid symbol or API limit reached');
+        }
+
+        // 4. Format Data
+        // Twelve Data returns newest first. Chart.js needs oldest first.
+        const history = data.values.reverse();
+
         const chartData = {
-            labels: result.map(quote => new Date(quote.date).toLocaleDateString()),
-            prices: result.map(quote => quote.close)
+            labels: history.map(item => item.datetime),
+            prices: history.map(item => parseFloat(item.close))
         };
 
         res.json(chartData);
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to fetch stock data. Check the ticker symbol.' });
+        console.error("Stock Fetch Error:", error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
-// Serve the PWA
+// Serve frontend for any other route
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
