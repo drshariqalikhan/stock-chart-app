@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Weekly PWA</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
+    
+    <!-- Bulma CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* Dark Theme Overrides */
+        body, html { background-color: #1a1a1a; color: #e0e0e0; height: 100%; }
+        .title, .label { color: #ffffff !important; }
+        
+        .card {
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        
+        .input {
+            background-color: #383838;
+            border-color: #555;
+            color: #fff;
+        }
+        .input::placeholder { color: #aaa; }
+        .input:focus { border-color: #00d1b2; box-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25); }
+        
+        .button.is-primary {
+            background-color: #00d1b2;
+            color: #1a1a1a;
+            font-weight: bold;
+        }
+
+        /* Chart Canvas Container */
+        .chart-container {
+            position: relative;
+            height: 50vh;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <section class="section">
+        <div class="container">
+            <h1 class="title has-text-centered">📈 Weekly Stock Tracker</h1>
+            
+            <div class="columns is-centered">
+                <div class="column is-half">
+                    <div class="card p-4">
+                        <div class="field">
+                            <label class="label">Stock Ticker</label>
+                            <div class="control">
+                                <input class="input" type="text" id="ticker" placeholder="e.g., AAPL, TSLA, NVDA" value="AAPL">
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label class="label">Duration (Years)</label>
+                            <div class="control">
+                                <input class="input" type="number" id="years" placeholder="1" value="1" min="1" max="10">
+                            </div>
+                        </div>
+
+                        <div class="control">
+                            <button class="button is-primary is-fullwidth" id="loadBtn">Load Chart</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="columns is-centered mt-4">
+                <div class="column is-three-quarters">
+                    <div class="card p-4">
+                        <div class="chart-container">
+                            <canvas id="stockChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // --- Logic ---
+        const loadBtn = document.getElementById('loadBtn');
+        const tickerInput = document.getElementById('ticker');
+        const yearsInput = document.getElementById('years');
+        const ctx = document.getElementById('stockChart').getContext('2d');
+        
+        let myChart = null;
+
+        loadBtn.addEventListener('click', fetchData);
+
+        async function fetchData() {
+            const symbol = tickerInput.value.toUpperCase();
+            const years = yearsInput.value;
+            
+            loadBtn.classList.add('is-loading');
+
+            try {
+                const response = await fetch(`/api/stock?symbol=${symbol}&years=${years}`);
+                const data = await response.json();
+
+                if (response.status !== 200) throw new Error(data.error);
+
+                renderChart(symbol, data.labels, data.prices);
+            } catch (error) {
+                alert(error.message);
+            } finally {
+                loadBtn.classList.remove('is-loading');
+            }
+        }
+
+        function renderChart(symbol, labels, dataPoints) {
+            if (myChart) myChart.destroy();
+
+            // Chart.js Dark Config
+            Chart.defaults.color = '#bbbbbb';
+            Chart.defaults.borderColor = '#444444';
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${symbol} Weekly Price ($)`,
+                        data: dataPoints,
+                        borderColor: '#00d1b2',
+                        backgroundColor: 'rgba(0, 209, 178, 0.2)',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: 'white' } }
+                    },
+                    scales: {
+                        x: { grid: { color: '#333' } },
+                        y: { grid: { color: '#333' } }
+                    }
+                }
+            });
+        }
+
+        // --- PWA Registration ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('SW Registered'))
+                    .catch(err => console.log('SW Failure', err));
+            });
+        }
+    </script>
+</body>
+</html>
