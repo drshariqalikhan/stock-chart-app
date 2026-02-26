@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock P/E Tracker</title>
-    <!-- Inline Manifest Data URI -->
+    <title>Stock P/E Tracker + Channel</title>
     <link rel="manifest" href='data:application/manifest+json,{"name":"StockPE","short_name":"StockPE","start_url":"/","display":"standalone","background_color":"#1a1a1a","theme_color":"#1a1a1a","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/2422/2422796.png","sizes":"512x512","type":"image/png"}]}'>
     <meta name="theme-color" content="#1a1a1a">
     
@@ -16,14 +15,16 @@
         .card { background-color: #2c2c2c; border: 1px solid #444; margin-bottom: 20px; }
         .input { background-color: #383838; border-color: #555; color: #fff; }
         .button.is-primary { background-color: #00d1b2; color: #1a1a1a; font-weight: bold; }
-        .chart-main { height: 40vh; position: relative; }
+        .button.is-info { font-weight: bold; }
+        .chart-main { height: 45vh; position: relative; }
         .chart-pe { height: 25vh; position: relative; }
     </style>
 </head>
 <body>
     <section class="section">
         <div class="container">
-            <h1 class="title has-text-centered">📉 Stock Weekly & P/E</h1>
+            <h1 class="title has-text-centered">📈 Stock Weekly & P/E</h1>
+            
             <div class="columns is-centered">
                 <div class="column is-half">
                     <div class="card p-4">
@@ -31,18 +32,30 @@
                             <p class="control is-expanded"><input class="input" type="text" id="tk" value="V"></p>
                             <p class="control" style="width: 80px;"><input class="input" type="number" id="yr" value="5"></p>
                             <p class="control"><button class="button is-primary" id="go">Load</button></p>
+                            <p class="control"><button class="button is-info" id="channelBtn">Price Channel</button></p>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="card p-4"><h2 class="subtitle is-6">Price ($)</h2><div class="chart-main"><canvas id="c1"></canvas></div></div>
-            <div class="card p-4"><h2 class="subtitle is-6">P/E Ratio (TTM)</h2><div class="chart-pe"><canvas id="c2"></canvas></div></div>
+
+            <div class="card p-4">
+                <h2 class="subtitle is-6">Price ($)</h2>
+                <div class="chart-main"><canvas id="c1"></canvas></div>
+            </div>
+            
+            <div class="card p-4">
+                <h2 class="subtitle is-6">P/E Ratio (TTM)</h2>
+                <div class="chart-pe"><canvas id="c2"></canvas></div>
+            </div>
         </div>
     </section>
 
     <script>
         let ch1 = null, ch2 = null;
+        let globalData = null; // Store fetched data for channel calculation
+
         const btn = document.getElementById('go');
+        const channelBtn = document.getElementById('channelBtn');
 
         btn.onclick = async () => {
             const s = document.getElementById('tk').value;
@@ -50,20 +63,127 @@
             btn.classList.add('is-loading');
             try {
                 const r = await fetch(`/api/stock?symbol=${s}&years=${y}`);
-                const d = await r.json();
-                if (!r.ok) throw new Error(d.error);
-                render(d);
+                globalData = await r.json();
+                if (!r.ok) throw new Error(globalData.error);
+                render(globalData);
             } catch (e) { alert(e.message); }
             finally { btn.classList.remove('is-loading'); }
         };
 
+        channelBtn.onclick = () => {
+            if (!globalData) return alert("Please load stock data first.");
+            calculateAndDrawChannel(globalData);
+        };
+
         function render(d) {
-            const opt = { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#333'}}} };
+            const opt = { 
+                responsive:true, 
+                maintainAspectRatio:false, 
+                animation: false,
+                plugins:{legend:{display:false}}, 
+                scales:{x:{grid:{display:false}}, y:{grid:{color:'#333'}}} 
+            };
             Chart.defaults.color = '#888';
+            
             if (ch1) ch1.destroy();
-            ch1 = new Chart(document.getElementById('c1'), { type:'line', data:{labels:d.labels, datasets:[{data:d.prices, borderColor:'#00d1b2', pointRadius:0, fill:true, backgroundColor:'rgba(0,209,178,0.1)'}]}, options:opt });
+            ch1 = new Chart(document.getElementById('c1'), { 
+                type:'line', 
+                data:{
+                    labels:d.labels, 
+                    datasets:[{
+                        id: 'mainPrice',
+                        data:d.prices, 
+                        borderColor:'#00d1b2', 
+                        pointRadius:0, 
+                        fill:true, 
+                        backgroundColor:'rgba(0,209,178,0.1)',
+                        zIndex: 1
+                    }]
+                }, 
+                options:opt 
+            });
+
             if (ch2) ch2.destroy();
-            ch2 = new Chart(document.getElementById('c2'), { type:'line', data:{labels:d.labels, datasets:[{data:d.peRatios, borderColor:'#ffe08a', pointRadius:0}]}, options:opt });
+            ch2 = new Chart(document.getElementById('c2'), { 
+                type:'line', 
+                data:{labels:d.labels, datasets:[{data:d.peRatios, borderColor:'#ffe08a', pointRadius:0}]}, 
+                options:opt 
+            });
+        }
+
+        function calculateAndDrawChannel(d) {
+            const prices = d.prices;
+            const pes = d.peRatios;
+            const n = prices.length;
+
+            // 1. Find indices with the lowest TTM P/E (with 1% tolerance)
+            const validPes = pes.filter(p => p !== null);
+            if (validPes.length < 2) return alert("Not enough P/E data to form a channel.");
+            
+            const minPe = Math.min(...validPes);
+            const lowPeIndices = [];
+            for(let i=0; i<n; i++) {
+                if(pes[i] !== null && pes[i] <= minPe * 1.01) lowPeIndices.append(i);
+            }
+
+            if (lowPeIndices.length < 2) return alert("Could not find enough low P/E points.");
+
+            // 2. Find the optimum bottom line (connects most points)
+            let bestSlope = 0, bestIntercept = 0, maxHits = 0;
+
+            for (let i = 0; i < lowPeIndices.length; i++) {
+                for (let j = i + 1; j < lowPeIndices.length; j++) {
+                    const idx1 = lowPeIndices[i], idx2 = lowPeIndices[j];
+                    const slope = (prices[idx2] - prices[idx1]) / (idx2 - idx1);
+                    const intercept = prices[idx1] - (slope * idx1);
+                    
+                    let hits = 0;
+                    for (let k of lowPeIndices) {
+                        const expectedPrice = (slope * k) + intercept;
+                        // Tolerance: 0.5% of price
+                        if (Math.abs(prices[k] - expectedPrice) < prices[k] * 0.005) hits++;
+                    }
+
+                    if (hits > maxHits) {
+                        maxHits = hits;
+                        bestSlope = slope;
+                        bestIntercept = intercept;
+                    }
+                }
+            }
+
+            // 3. Find the parallel upper line (shift bottom line to touch max price)
+            let maxUpperIntercept = -Infinity;
+            for (let i = 0; i < n; i++) {
+                const currentIntercept = prices[i] - (bestSlope * i);
+                if (currentIntercept > maxUpperIntercept) maxUpperIntercept = currentIntercept;
+            }
+
+            // 4. Create the line datasets
+            const bottomLine = prices.map((_, i) => (bestSlope * i) + bestIntercept);
+            const topLine = prices.map((_, i) => (bestSlope * i) + maxUpperIntercept);
+
+            // Add to chart
+            ch1.data.datasets = ch1.data.datasets.filter(ds => ds.id === 'mainPrice'); // Clear old lines
+            ch1.data.datasets.push({
+                label: 'Support',
+                data: bottomLine,
+                borderColor: '#ff4d4d',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false
+            });
+            ch1.data.datasets.push({
+                label: 'Resistance',
+                data: topLine,
+                borderColor: '#ff4d4d',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false
+            });
+            ch1.update();
         }
 
         if ('serviceWorker' in navigator) {
