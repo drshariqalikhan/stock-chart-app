@@ -3,81 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock & P/E Tracker</title>
-    <link rel="manifest" href="/manifest.json">
+    <title>Stock P/E Tracker</title>
+    <!-- Inline Manifest Data URI -->
+    <link rel="manifest" href='data:application/manifest+json,{"name":"StockPE","short_name":"StockPE","start_url":"/","display":"standalone","background_color":"#1a1a1a","theme_color":"#1a1a1a","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/2422/2422796.png","sizes":"512x512","type":"image/png"}]}'>
     <meta name="theme-color" content="#1a1a1a">
+    
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { background-color: #1a1a1a; color: #e0e0e0; min-height: 100vh; }
-        .title, .label, .subtitle { color: #ffffff !important; }
+        .title, .label, .subtitle { color: #fff !important; }
         .card { background-color: #2c2c2c; border: 1px solid #444; margin-bottom: 20px; }
         .input { background-color: #383838; border-color: #555; color: #fff; }
-        .button.is-primary { background-color: #00d1b2; color: #1a1a1a; font-weight: bold; border: none; }
-        .chart-container-main { position: relative; height: 45vh; width: 100%; }
-        .chart-container-pe { position: relative; height: 25vh; width: 100%; }
+        .button.is-primary { background-color: #00d1b2; color: #1a1a1a; font-weight: bold; }
+        .chart-main { height: 40vh; position: relative; }
+        .chart-pe { height: 25vh; position: relative; }
     </style>
 </head>
 <body>
     <section class="section">
         <div class="container">
-            <h1 class="title has-text-centered">📉 Stock & P/E Ratio</h1>
+            <h1 class="title has-text-centered">📉 Stock Weekly & P/E</h1>
             <div class="columns is-centered">
                 <div class="column is-half">
                     <div class="card p-4">
-                        <div class="columns is-mobile">
-                            <div class="column"><label class="label">Ticker</label><input class="input" type="text" id="ticker" value="AAPL"></div>
-                            <div class="column is-one-quarter"><label class="label">Years</label><input class="input" type="number" id="years" value="3"></div>
+                        <div class="field is-grouped">
+                            <p class="control is-expanded"><input class="input" type="text" id="tk" value="V"></p>
+                            <p class="control" style="width: 80px;"><input class="input" type="number" id="yr" value="5"></p>
+                            <p class="control"><button class="button is-primary" id="go">Load</button></p>
                         </div>
-                        <button class="button is-primary is-fullwidth" id="loadBtn">Load Charts</button>
                     </div>
                 </div>
             </div>
-            <div class="columns is-centered"><div class="column is-three-quarters"><div class="card p-4"><h2 class="subtitle is-6">Price ($)</h2><div class="chart-container-main"><canvas id="priceChart"></canvas></div></div></div></div>
-            <div class="columns is-centered"><div class="column is-three-quarters"><div class="card p-4"><h2 class="subtitle is-6">P/E Ratio (TTM)</h2><div class="chart-container-pe"><canvas id="peChart"></canvas></div></div></div></div>
+            <div class="card p-4"><h2 class="subtitle is-6">Price ($)</h2><div class="chart-main"><canvas id="c1"></canvas></div></div>
+            <div class="card p-4"><h2 class="subtitle is-6">P/E Ratio (TTM)</h2><div class="chart-pe"><canvas id="c2"></canvas></div></div>
         </div>
     </section>
 
     <script>
-        let priceChart = null, peChart = null;
-        const loadBtn = document.getElementById('loadBtn');
+        let ch1 = null, ch2 = null;
+        const btn = document.getElementById('go');
 
-        loadBtn.onclick = async () => {
-            const symbol = document.getElementById('ticker').value.toUpperCase();
-            const years = document.getElementById('years').value;
-            loadBtn.classList.add('is-loading');
+        btn.onclick = async () => {
+            const s = document.getElementById('tk').value;
+            const y = document.getElementById('yr').value;
+            btn.classList.add('is-loading');
             try {
-                const res = await fetch(`/api/stock?symbol=${symbol}&years=${years}`);
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error);
-                render(data);
+                const r = await fetch(`/api/stock?symbol=${s}&years=${y}`);
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error);
+                render(d);
             } catch (e) { alert(e.message); }
-            finally { loadBtn.classList.remove('is-loading'); }
+            finally { btn.classList.remove('is-loading'); }
         };
 
-        function render(data) {
+        function render(d) {
+            const opt = { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#333'}}} };
             Chart.defaults.color = '#888';
-            Chart.defaults.borderColor = '#333';
-            const options = { 
-                responsive: true, maintainAspectRatio: false, 
-                interaction: { mode: 'index', intersect: false },
-                plugins: { legend: { display: false } },
-                scales: { x: { grid: { display: false } }, y: { grid: { color: '#333' } } }
-            };
+            if (ch1) ch1.destroy();
+            ch1 = new Chart(document.getElementById('c1'), { type:'line', data:{labels:d.labels, datasets:[{data:d.prices, borderColor:'#00d1b2', pointRadius:0, fill:true, backgroundColor:'rgba(0,209,178,0.1)'}]}, options:opt });
+            if (ch2) ch2.destroy();
+            ch2 = new Chart(document.getElementById('c2'), { type:'line', data:{labels:d.labels, datasets:[{data:d.peRatios, borderColor:'#ffe08a', pointRadius:0}]}, options:opt });
+        }
 
-            if (priceChart) priceChart.destroy();
-            priceChart = new Chart(document.getElementById('priceChart'), {
-                type: 'line',
-                data: { labels: data.labels, datasets: [{ data: data.prices, borderColor: '#00d1b2', pointRadius: 0, fill: true, backgroundColor: 'rgba(0,209,178,0.1)' }] },
-                options: options
-            });
-
-            if (peChart) peChart.destroy();
-            peChart = new Chart(document.getElementById('peChart'), {
-                type: 'line',
-                data: { labels: data.labels, datasets: [{ data: data.peRatios, borderColor: '#ffe08a', pointRadius: 0 }] },
-                options: options
-            });
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
         }
     </script>
 </body>
