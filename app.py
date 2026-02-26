@@ -38,39 +38,36 @@ def get_stock_data():
         # 1. Fetch Price Data
         hist = ticker.history(period=f"{years + 2}y", interval="1wk")
         if hist.empty: return jsonify({'error': 'No price data'}), 404
-
-        # --- FIX: Normalize Price Index (Strip timezone) ---
         hist.index = hist.index.tz_localize(None).normalize()
 
-        # 2. Fetch Earnings Data
-        income_stmt = ticker.quarterly_income_stmt
+        # 2. Fetch Earnings History (This goes back much further than Income Stmt)
+        # We get the last 40 entries to ensure a deep history
+        earnings_df = ticker.get_earnings_dates(limit=40)
+        
         pe_list = [None] * len(hist)
 
-        if income_stmt is not None and not income_stmt.empty:
-            eps_keys = ['Diluted EPS', 'Basic EPS', 'EPS Basic', 'EPS Diluted']
-            eps_row = next((income_stmt.loc[k] for k in eps_keys if k in income_stmt.index), None)
+        if earnings_df is not None and not earnings_df.empty:
+            # We want 'Reported EPS'. We drop rows where it's NaN.
+            # The index of earnings_df is the date the earnings were announced.
+            eps_data = earnings_df['Reported EPS'].dropna().sort_index()
+            eps_data.index = eps_data.index.tz_localize(None).normalize()
             
-            if eps_row is not None:
-                # --- FIX: Normalize Earnings Index (Strip timezone) ---
-                eps_series = eps_row.sort_index()
-                eps_series.index = pd.to_datetime(eps_series.index).tz_localize(None).normalize()
+            pe_list = []
+            for date, row in hist.iterrows():
+                # Get earnings reported BEFORE or ON this specific price date
+                past_eps = eps_data[eps_data.index <= date]
                 
-                pe_list = []
-                for date, row in hist.iterrows():
-                    # Both 'date' and 'eps_series.index' are now naive timestamps
-                    past_eps = eps_series[eps_series.index <= date]
-                    
-                    if len(past_eps) >= 4:
-                        ttm_eps = past_eps.tail(4).sum()
-                        # Only calc P/E if earnings are positive
-                        val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
-                        pe_list.append(round(val, 2) if val else None)
-                    else:
-                        pe_list.append(None)
+                if len(past_eps) >= 4:
+                    # Sum the 4 most recent quarters relative to this date
+                    ttm_eps = past_eps.tail(4).sum()
+                    val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
+                    pe_list.append(round(val, 2) if val else None)
+                else:
+                    pe_list.append(None)
 
         hist['PE'] = pe_list
         
-        # 3. Final Filtering
+        # 3. Final Filtering for the chart view
         cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
         final_df = hist[hist.index >= cutoff].replace({np.nan: None})
 
