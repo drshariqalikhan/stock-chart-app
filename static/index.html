@@ -5,54 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stock P/E Tracker + Channel</title>
     
-    <!-- Inline PWA Manifest -->
     <link rel="manifest" href='data:application/manifest+json,{"name":"StockPE","short_name":"StockPE","start_url":"/","display":"standalone","background_color":"#1a1a1a","theme_color":"#1a1a1a","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/2422/2422796.png","sizes":"512x512","type":"image/png"}]}'>
     <meta name="theme-color" content="#1a1a1a">
     
-    <!-- External CSS & JS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
-        /* Dark Theme Styling */
-        body { 
-            background-color: #1a1a1a; 
-            color: #e0e0e0; 
-            min-height: 100vh; 
-            padding-bottom: 50px; 
-        }
+        body { background-color: #1a1a1a; color: #e0e0e0; min-height: 100vh; padding-bottom: 50px; }
         .title, .label, .subtitle { color: #ffffff !important; }
-        
-        .card { 
-            background-color: #2c2c2c; 
-            border: 1px solid #444; 
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            margin-bottom: 25px; 
-        }
-        
-        .input { 
-            background-color: #383838; 
-            border-color: #555; 
-            color: #fff; 
-        }
-        .input::placeholder { color: #888; }
-        .input:focus { border-color: #00d1b2; box-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25); }
-        
-        .button.is-primary { 
-            background-color: #00d1b2; 
-            color: #1a1a1a; 
-            font-weight: bold; 
-            border: none;
-        }
-        .button.is-warning { 
-            background-color: #ffdd57;
-            color: #1a1a1a;
-            font-weight: bold; 
-            margin-top: 10px; 
-        }
+        .card { background-color: #2c2c2c; border: 1px solid #444; box-shadow: 0 4px 10px rgba(0,0,0,0.5); margin-bottom: 25px; }
+        .input { background-color: #383838; border-color: #555; color: #fff; }
+        .button.is-primary { background-color: #00d1b2; color: #1a1a1a; font-weight: bold; border: none; }
+        .button.is-warning { background-color: #ffdd57; color: #1a1a1a; font-weight: bold; margin-top: 10px; }
 
         .chart-container-main { position: relative; height: 45vh; width: 100%; }
         .chart-container-pe { position: relative; height: 25vh; width: 100%; }
+
+        /* Log Window Styling */
+        #eventLog {
+            height: 150px;
+            overflow-y: auto;
+            background-color: #000;
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.8rem;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+        .log-info { color: #aaa; }
+        .log-success { color: #00d1b2; }
+        .log-error { color: #ff3860; font-weight: bold; }
+        .log-warn { color: #ffdd57; }
     </style>
 </head>
 <body>
@@ -64,41 +49,40 @@
             <div class="columns is-centered">
                 <div class="column is-half">
                     <div class="card p-4">
-                        <!-- Inputs -->
                         <div class="field is-grouped">
                             <p class="control is-expanded">
                                 <label class="label is-small">Ticker Symbol</label>
-                                <input class="input" type="text" id="tk" placeholder="e.g. AAPL, V, MSFT" value="V">
+                                <input class="input" type="text" id="tk" value="V">
                             </p>
                             <p class="control" style="width: 100px;">
                                 <label class="label is-small">Years</label>
-                                <input class="input" type="number" id="yr" value="5" min="1" max="15">
+                                <input class="input" type="number" id="yr" value="5">
                             </p>
                             <p class="control">
                                 <label class="label is-small" style="visibility:hidden">.</label>
                                 <button class="button is-primary" id="go">Load Data</button>
                             </p>
                         </div>
-                        <!-- Channel Feature Button -->
                         <button class="button is-warning is-fullwidth" id="channelBtn">Draw Price Channel</button>
                     </div>
                 </div>
             </div>
 
-            <!-- Price Chart Card -->
             <div class="card p-4">
                 <h2 class="subtitle is-6 mb-2">Price History ($)</h2>
-                <div class="chart-container-main">
-                    <canvas id="c1"></canvas>
-                </div>
+                <div class="chart-container-main"><canvas id="c1"></canvas></div>
             </div>
             
-            <!-- P/E Chart Card -->
             <div class="card p-4">
                 <h2 class="subtitle is-6 mb-2">P/E Ratio (TTM)</h2>
-                <div class="chart-container-pe">
-                    <canvas id="c2"></canvas>
-                </div>
+                <div class="chart-container-pe"><canvas id="c2"></canvas></div>
+            </div>
+
+            <!-- LOG WINDOW -->
+            <div class="card p-4">
+                <h2 class="subtitle is-6 mb-2">System Events & Analysis Log</h2>
+                <div id="eventLog"></div>
+                <button class="button is-small is-ghost mt-2" onclick="document.getElementById('eventLog').innerHTML = ''" style="color:#888">Clear Log</button>
             </div>
         </div>
     </section>
@@ -106,165 +90,123 @@
     <script>
         let ch1 = null, ch2 = null, globalData = null;
 
+        // --- Logger Function ---
+        function addLog(msg, type = 'info') {
+            const logWindow = document.getElementById('eventLog');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-${type}`;
+            entry.innerHTML = `<span style="color:#666">[${time}]</span> ${msg}`;
+            logWindow.appendChild(entry);
+            logWindow.scrollTop = logWindow.scrollHeight; // Auto-scroll
+        }
+
         const loadBtn = document.getElementById('go');
         const channelBtn = document.getElementById('channelBtn');
 
-        // 1. Fetch Data from Backend
+        // 1. Fetch Data
         loadBtn.onclick = async () => {
             const s = document.getElementById('tk').value.trim().toUpperCase();
             const y = document.getElementById('yr').value;
             
-            if(!s) return alert("Please enter a ticker symbol");
-            
+            addLog(`Initiating fetch for ticker: ${s}...`);
             loadBtn.classList.add('is-loading');
+
             try {
                 const r = await fetch(`/api/stock?symbol=${s}&years=${y}`);
                 globalData = await r.json();
                 
-                if (!r.ok) throw new Error(globalData.error || "Failed to load data");
+                if (!r.ok) throw new Error(globalData.error || "Server error");
                 
+                addLog(`Success: Received ${globalData.prices.length} price points for ${s}.`, 'success');
+                
+                const validPEs = globalData.peRatios.filter(v => v !== null).length;
+                addLog(`Info: Found ${validPEs} quarterly P/E TTM entries.`, 'info');
+
                 renderCharts(globalData);
             } catch (e) {
-                alert("Error: " + e.message);
+                addLog(`Error: ${e.message}`, 'error');
             } finally {
                 loadBtn.classList.remove('is-loading');
             }
         };
 
-        // 2. Render Charts using Chart.js
+        // 2. Render Charts
         function renderCharts(d) {
             Chart.defaults.color = '#999';
             Chart.defaults.borderColor = '#333';
+            const commonOptions = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#333' }, beginAtZero: false } } };
 
-            const commonOptions = { 
-                responsive: true, 
-                maintainAspectRatio: false, 
-                animation: false,
-                plugins: { legend: { display: false } },
-                scales: { 
-                    x: { grid: { display: false } }, 
-                    y: { grid: { color: '#333' }, beginAtZero: false } 
-                }
-            };
-
-            // Price Chart
             if (ch1) ch1.destroy();
-            const ctx1 = document.getElementById('c1').getContext('2d');
-            ch1 = new Chart(ctx1, { 
+            ch1 = new Chart(document.getElementById('c1').getContext('2d'), { 
                 type: 'line', 
-                data: { 
-                    labels: d.labels, 
-                    datasets: [{ 
-                        id: 'mainPrice',
-                        label: 'Price',
-                        data: d.prices, 
-                        borderColor: '#00d1b2', 
-                        borderWidth: 2,
-                        pointRadius: 0, 
-                        fill: true, 
-                        backgroundColor: 'rgba(0, 209, 178, 0.1)',
-                        tension: 0.1
-                    }] 
-                }, 
+                data: { labels: d.labels, datasets: [{ id: 'mainPrice', data: d.prices, borderColor: '#00d1b2', borderWidth: 2, pointRadius: 0, fill: true, backgroundColor: 'rgba(0, 209, 178, 0.1)', tension: 0.1 }] }, 
                 options: commonOptions 
             });
 
-            // P/E Chart
             if (ch2) ch2.destroy();
-            const ctx2 = document.getElementById('c2').getContext('2d');
-            ch2 = new Chart(ctx2, { 
+            ch2 = new Chart(document.getElementById('c2').getContext('2d'), { 
                 type: 'line', 
-                data: { 
-                    labels: d.labels, 
-                    datasets: [{ 
-                        label: 'P/E TTM',
-                        data: d.peRatios, 
-                        borderColor: '#ffe08a', 
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    }] 
-                }, 
+                data: { labels: d.labels, datasets: [{ data: d.peRatios, borderColor: '#ffe08a', borderWidth: 2, pointRadius: 0, tension: 0.1 }] }, 
                 options: commonOptions 
             });
+            addLog('Charts rendered successfully.', 'info');
         }
 
         // 3. Price Channel Logic
         channelBtn.onclick = () => {
-            if (!globalData || !ch1) return alert("Load stock data first!");
+            if (!globalData || !ch1) return addLog("Action failed: No data loaded.", "warn");
             
-            const p = globalData.prices;
-            const pe = globalData.peRatios;
-            const n = p.length;
+            addLog("Analyzing P/E distribution for price channel...");
+            const p = globalData.prices, pe = globalData.peRatios, n = p.length;
 
-            // Step A: Find "Low P/E" candidates using 10th Percentile
             const validPes = pe.filter(v => v !== null).sort((a,b) => a - b);
-            if (validPes.length < 10) return alert("Not enough P/E history for a channel.");
+            if (validPes.length < 10) {
+                addLog("Error: Not enough P/E history to build channel.", "error");
+                return;
+            }
             
             const threshold = validPes[Math.floor(validPes.length * 0.10)];
+            addLog(`TTM P/E Threshold (10th percentile): ${threshold.toFixed(2)}`, 'info');
+
             const candidates = [];
             for(let i=0; i<n; i++) if(pe[i] !== null && pe[i] <= threshold) candidates.push(i);
+            addLog(`Identified ${candidates.length} low-P/E candidate points.`, 'info');
 
-            // Step B: Brute Force Line Fitting for Bottom Line
-            let bestSlope = 0, bestIntercept = 0, maxHits = -1;
-
+            let bS = 0, bI = 0, maxH = -1;
             for(let i=0; i < candidates.length; i++) {
                 for(let j=i+1; j < candidates.length; j++) {
                     const idx1 = candidates[i], idx2 = candidates[j];
                     const slope = (p[idx2] - p[idx1]) / (idx2 - idx1);
-                    const intercept = p[idx1] - (slope * idx1);
-                    
+                    const inter = p[idx1] - (slope * idx1);
                     let hits = 0;
-                    candidates.forEach(k => {
-                        const expectedPrice = (slope * k) + intercept;
-                        // 2% price tolerance
-                        if(Math.abs(p[k] - expectedPrice) < p[k] * 0.02) hits++;
-                    });
-
-                    if(hits > maxHits) {
-                        maxHits = hits;
-                        bestSlope = slope;
-                        bestIntercept = intercept;
-                    }
+                    candidates.forEach(k => { if(Math.abs(p[k] - (slope*k + inter)) < p[k] * 0.02) hits++; });
+                    if(hits > maxH) { maxH = hits; bS = slope; bI = inter; }
                 }
             }
 
-            // Step C: Find Parallel Upper Line (Resistance)
-            let maxUpperIntercept = -Infinity;
+            addLog(`Optimal bottom line found with ${maxH} point hits.`, 'success');
+
+            let maxU = -Infinity;
             for(let i=0; i<n; i++) {
-                let currentIntercept = p[i] - (bestSlope * i);
-                if(currentIntercept > maxUpperIntercept) maxUpperIntercept = currentIntercept;
+                let currentU = p[i] - (bS * i);
+                if(currentU > maxU) maxU = currentU;
             }
 
-            // Step D: Update Chart.js with new lines
-            // Keep original price line
             ch1.data.datasets = ch1.data.datasets.filter(ds => ds.id === 'mainPrice');
-            
-            const channelStyle = { pointRadius:0, borderWidth:2, borderDash:[5,5], fill:false, tension:0 };
-
-            // Support line
-            ch1.data.datasets.push({
-                label: 'Support (Low P/E Base)',
-                data: p.map((_, i) => (bestSlope * i) + bestIntercept),
-                borderColor: '#ff4d4d',
-                ...channelStyle
-            });
-
-            // Resistance line
-            ch1.data.datasets.push({
-                label: 'Resistance (Parallel Max)',
-                data: p.map((_, i) => (bestSlope * i) + maxUpperIntercept),
-                borderColor: '#ff4d4d',
-                ...channelStyle
-            });
-
+            const style = { pointRadius:0, borderWidth:2, borderDash:[5,5], fill:false, tension:0 };
+            ch1.data.datasets.push({ label: 'Support', data: p.map((_, i) => (bS * i) + bI), borderColor: '#ff4d4d', ...style });
+            ch1.data.datasets.push({ label: 'Resistance', data: p.map((_, i) => (bS * i) + maxU), borderColor: '#ff4d4d', ...style });
             ch1.update();
+            addLog("Price channel lines projected onto chart.", "success");
         };
 
-        // 4. PWA Service Worker Registration
+        // 4. PWA Registration
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js').catch(err => console.log(err));
+                navigator.serviceWorker.register('/sw.js')
+                    .then(() => addLog("Service Worker: Registered.", "success"))
+                    .catch(e => addLog("Service Worker: Registration failed.", "error"));
             });
         }
     </script>
