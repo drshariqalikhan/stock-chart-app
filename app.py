@@ -8,7 +8,6 @@ import numpy as np
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
-# Service Worker Script
 SW_CODE = """
 const CACHE_NAME = 'stock-pe-v1';
 const ASSETS = ['/', '/index.html'];
@@ -35,21 +34,23 @@ def get_stock_data():
         years = int(request.args.get('years', '3'))
         ticker = yf.Ticker(symbol)
         
-        # 1. Fetch Price Data
-        hist = ticker.history(period=f"{years + 2}y", interval="1wk")
+        # 1. Fetch Price Data (Fetch extra 3 years for EMA stabilization)
+        hist = ticker.history(period=f"{years + 3}y", interval="1wk")
         if hist.empty: return jsonify({'error': 'No price data'}), 404
         hist.index = hist.index.tz_localize(None).normalize()
 
-        # 2. Fetch Earnings History (Uses lxml)
+        # 2. Calculate EMAs (Exponential Moving Averages)
+        hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
+        hist['EMA100'] = hist['Close'].ewm(span=100, adjust=False).mean()
+
+        # 3. Fetch Earnings History
         earnings_df = ticker.get_earnings_dates(limit=40)
-        
         pe_list = [None] * len(hist)
 
         if earnings_df is not None and not earnings_df.empty:
             if 'Reported EPS' in earnings_df.columns:
                 eps_data = earnings_df['Reported EPS'].dropna().sort_index()
                 eps_data.index = eps_data.index.tz_localize(None).normalize()
-                
                 pe_list = []
                 for date, row in hist.iterrows():
                     past_eps = eps_data[eps_data.index <= date]
@@ -62,20 +63,20 @@ def get_stock_data():
 
         hist['PE'] = pe_list
         
-        # 3. Final Filtering
+        # 4. Final Filtering for selected years
         cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
         final_df = hist[hist.index >= cutoff].replace({np.nan: None})
 
         return jsonify({
             'labels': final_df.index.strftime('%Y-%m-%d').tolist(),
             'prices': final_df['Close'].round(2).tolist(),
+            'ema50': final_df['EMA50'].round(2).tolist(),
+            'ema100': final_df['EMA100'].round(2).tolist(),
             'peRatios': final_df['PE'].tolist()
         })
     except Exception as e:
-        print(f"Error: {e}")
         return jsonify({'error': str(e)}), 500
 
-# --- Serve Frontend ---
 @app.route('/')
 @app.route('/index.html')
 def serve_index():
