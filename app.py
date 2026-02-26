@@ -40,34 +40,29 @@ def get_stock_data():
         if hist.empty: return jsonify({'error': 'No price data'}), 404
         hist.index = hist.index.tz_localize(None).normalize()
 
-        # 2. Fetch Earnings History (This goes back much further than Income Stmt)
-        # We get the last 40 entries to ensure a deep history
+        # 2. Fetch Earnings History (Uses lxml)
         earnings_df = ticker.get_earnings_dates(limit=40)
         
         pe_list = [None] * len(hist)
 
         if earnings_df is not None and not earnings_df.empty:
-            # We want 'Reported EPS'. We drop rows where it's NaN.
-            # The index of earnings_df is the date the earnings were announced.
-            eps_data = earnings_df['Reported EPS'].dropna().sort_index()
-            eps_data.index = eps_data.index.tz_localize(None).normalize()
-            
-            pe_list = []
-            for date, row in hist.iterrows():
-                # Get earnings reported BEFORE or ON this specific price date
-                past_eps = eps_data[eps_data.index <= date]
+            if 'Reported EPS' in earnings_df.columns:
+                eps_data = earnings_df['Reported EPS'].dropna().sort_index()
+                eps_data.index = eps_data.index.tz_localize(None).normalize()
                 
-                if len(past_eps) >= 4:
-                    # Sum the 4 most recent quarters relative to this date
-                    ttm_eps = past_eps.tail(4).sum()
-                    val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
-                    pe_list.append(round(val, 2) if val else None)
-                else:
-                    pe_list.append(None)
+                pe_list = []
+                for date, row in hist.iterrows():
+                    past_eps = eps_data[eps_data.index <= date]
+                    if len(past_eps) >= 4:
+                        ttm_eps = past_eps.tail(4).sum()
+                        val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
+                        pe_list.append(round(val, 2) if val else None)
+                    else:
+                        pe_list.append(None)
 
         hist['PE'] = pe_list
         
-        # 3. Final Filtering for the chart view
+        # 3. Final Filtering
         cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
         final_df = hist[hist.index >= cutoff].replace({np.nan: None})
 
@@ -80,7 +75,9 @@ def get_stock_data():
         print(f"Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+# --- Serve Frontend ---
 @app.route('/')
+@app.route('/index.html')
 def serve_index():
     return send_from_directory(app.static_folder, 'index.html')
 
