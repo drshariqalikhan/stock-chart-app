@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Weekly PWA</title>
+    <title>Stock & P/E Tracker</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#1a1a1a">
     
@@ -13,14 +13,15 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
-        /* Dark Theme Overrides */
-        body, html { background-color: #1a1a1a; color: #e0e0e0; height: 100%; }
+        /* Dark Theme & Layout */
+        body, html { background-color: #1a1a1a; color: #e0e0e0; min-height: 100vh; }
         .title, .label { color: #ffffff !important; }
         
         .card {
             background-color: #2c2c2c;
             border: 1px solid #444;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
         }
         
         .input {
@@ -28,19 +29,24 @@
             border-color: #555;
             color: #fff;
         }
-        .input::placeholder { color: #aaa; }
         .input:focus { border-color: #00d1b2; box-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25); }
         
         .button.is-primary {
             background-color: #00d1b2;
             color: #1a1a1a;
             font-weight: bold;
+            border: none;
         }
 
-        /* Chart Canvas Container */
-        .chart-container {
+        /* Chart Heights */
+        .chart-container-main {
             position: relative;
-            height: 50vh;
+            height: 50vh; /* Price chart is taller */
+            width: 100%;
+        }
+        .chart-container-pe {
+            position: relative;
+            height: 25vh; /* P/E chart is shorter */
             width: 100%;
         }
     </style>
@@ -49,52 +55,83 @@
 
     <section class="section">
         <div class="container">
-            <h1 class="title has-text-centered">📈 Weekly Stock Tracker</h1>
+            <h1 class="title has-text-centered">📈 Stock & P/E Ratio</h1>
             
+            <!-- Controls -->
             <div class="columns is-centered">
                 <div class="column is-half">
                     <div class="card p-4">
-                        <div class="field">
-                            <label class="label">Stock Ticker</label>
-                            <div class="control">
-                                <input class="input" type="text" id="ticker" placeholder="e.g., AAPL, TSLA, NVDA" value="AAPL">
+                        <div class="columns is-mobile">
+                            <div class="column">
+                                <label class="label">Ticker</label>
+                                <input class="input" type="text" id="ticker" placeholder="AAPL" value="AAPL">
+                            </div>
+                            <div class="column is-one-quarter">
+                                <label class="label">Years</label>
+                                <input class="input" type="number" id="years" value="3" min="1" max="10">
                             </div>
                         </div>
-
-                        <div class="field">
-                            <label class="label">Duration (Years)</label>
-                            <div class="control">
-                                <input class="input" type="number" id="years" placeholder="1" value="1" min="1" max="10">
-                            </div>
-                        </div>
-
-                        <div class="control">
-                            <button class="button is-primary is-fullwidth" id="loadBtn">Load Chart</button>
-                        </div>
+                        <button class="button is-primary is-fullwidth" id="loadBtn">Load Charts</button>
                     </div>
                 </div>
             </div>
 
-            <div class="columns is-centered mt-4">
+            <!-- Price Chart -->
+            <div class="columns is-centered">
                 <div class="column is-three-quarters">
                     <div class="card p-4">
-                        <div class="chart-container">
-                            <canvas id="stockChart"></canvas>
+                        <h2 class="subtitle has-text-white is-6 mb-2">Weekly Price ($)</h2>
+                        <div class="chart-container-main">
+                            <canvas id="priceChart"></canvas>
                         </div>
                     </div>
                 </div>
             </div>
+
+            <!-- P/E Chart -->
+            <div class="columns is-centered">
+                <div class="column is-three-quarters">
+                    <div class="card p-4">
+                        <h2 class="subtitle has-text-white is-6 mb-2">P/E Ratio (TTM)</h2>
+                        <div class="chart-container-pe">
+                            <canvas id="peChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </section>
 
     <script>
-        // --- Logic ---
         const loadBtn = document.getElementById('loadBtn');
         const tickerInput = document.getElementById('ticker');
         const yearsInput = document.getElementById('years');
-        const ctx = document.getElementById('stockChart').getContext('2d');
         
-        let myChart = null;
+        let priceChartInstance = null;
+        let peChartInstance = null;
+
+        // Common Chart Options (Dark Theme)
+        Chart.defaults.color = '#888';
+        Chart.defaults.borderColor = '#333';
+
+        const commonOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { grid: { display: false } },
+                y: { grid: { color: '#333' }, beginAtZero: false }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: { 
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    titleColor: '#fff',
+                    bodyColor: '#fff'
+                }
+            }
+        };
 
         loadBtn.addEventListener('click', fetchData);
 
@@ -110,7 +147,7 @@
 
                 if (response.status !== 200) throw new Error(data.error);
 
-                renderChart(symbol, data.labels, data.prices);
+                renderCharts(symbol, data);
             } catch (error) {
                 alert(error.message);
             } finally {
@@ -118,48 +155,64 @@
             }
         }
 
-        function renderChart(symbol, labels, dataPoints) {
-            if (myChart) myChart.destroy();
+        function renderCharts(symbol, data) {
+            // 1. Render Price Chart
+            const ctxPrice = document.getElementById('priceChart').getContext('2d');
+            if (priceChartInstance) priceChartInstance.destroy();
 
-            // Chart.js Dark Config
-            Chart.defaults.color = '#bbbbbb';
-            Chart.defaults.borderColor = '#444444';
-
-            myChart = new Chart(ctx, {
+            priceChartInstance = new Chart(ctxPrice, {
                 type: 'line',
                 data: {
-                    labels: labels,
+                    labels: data.labels,
                     datasets: [{
-                        label: `${symbol} Weekly Price ($)`,
-                        data: dataPoints,
-                        borderColor: '#00d1b2',
-                        backgroundColor: 'rgba(0, 209, 178, 0.2)',
+                        label: 'Price',
+                        data: data.prices,
+                        borderColor: '#00d1b2', // Cyan/Green
+                        backgroundColor: 'rgba(0, 209, 178, 0.1)',
                         borderWidth: 2,
-                        pointRadius: 2,
+                        pointRadius: 0,
                         tension: 0.1,
                         fill: true
                     }]
                 },
+                options: commonOptions
+            });
+
+            // 2. Render P/E Chart
+            const ctxPe = document.getElementById('peChart').getContext('2d');
+            if (peChartInstance) peChartInstance.destroy();
+
+            peChartInstance = new Chart(ctxPe, {
+                type: 'line',
+                data: {
+                    labels: data.labels, // Sync with price dates
+                    datasets: [{
+                        label: 'P/E (TTM)',
+                        data: data.peRatios,
+                        borderColor: '#ffe08a', // Yellow
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { labels: { color: 'white' } }
-                    },
+                    ...commonOptions,
                     scales: {
-                        x: { grid: { color: '#333' } },
-                        y: { grid: { color: '#333' } }
+                        ...commonOptions.scales,
+                        y: { 
+                            grid: { color: '#333' },
+                            title: { display: true, text: 'Ratio' } 
+                        }
                     }
                 }
             });
         }
 
-        // --- PWA Registration ---
+        // PWA Registration
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then(reg => console.log('SW Registered'))
-                    .catch(err => console.log('SW Failure', err));
+                navigator.serviceWorker.register('/sw.js');
             });
         }
     </script>
