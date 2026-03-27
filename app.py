@@ -1,7 +1,7 @@
 import logging
 import yfinance as yf
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -37,6 +37,23 @@ async def serve_frontend():
         logger.error(f"Error: {file_path} not found.")
         raise HTTPException(status_code=404, detail="Frontend file not found.")
 
+@app.get("/sw.js")
+async def serve_service_worker():
+    """Dynamically generates the Service Worker to avoid blob URL security blocks."""
+    sw_code = """
+    self.addEventListener('install', (e) => self.skipWaiting());
+    self.addEventListener('activate', (e) => self.clients.claim());
+    self.addEventListener('fetch', (e) => {
+        e.respondWith(fetch(e.request).catch(() => new Response('Offline mode not fully supported.')));
+    });
+    """
+    return Response(content=sw_code, media_type="application/javascript")
+
+@app.get("/api/stock")
+async def get_stock_legacy(symbol: str, years: int = 5):
+    """Catches old cached frontend requests and routes them to the new logic."""
+    return await get_earnings(symbol)
+
 @app.get("/api/earnings/{ticker}")
 async def get_earnings(ticker: str):
     """Fetches historical earnings data for the given ticker."""
@@ -50,8 +67,7 @@ async def get_earnings(ticker: str):
         if df is None or df.empty:
             raise ValueError(f"No earnings data available for {ticker}.")
 
-        # Yahoo Finance often changes its formatting. 
-        # We check if the expected columns exist to prevent crashes.
+        # Check if expected columns exist to prevent crashes
         if 'Reported EPS' not in df.columns or 'EPS Estimate' not in df.columns:
             raise ValueError(f"Yahoo Finance is missing EPS columns for {ticker}.")
 
@@ -78,7 +94,7 @@ async def get_earnings(ticker: str):
         }
 
     except Exception as e:
-        # Instead of crashing the server, gracefully send the error to the UI logs
+        # Gracefully send the error to the UI logs instead of crashing
         error_msg = str(e)
         logger.error(f"Error fetching data for {ticker}: {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)

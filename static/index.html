@@ -121,8 +121,9 @@
 
         // --- 1-FILE PWA HACK ---
         addLog('Initializing 1-file PWA setup...', 'event');
-        const iconSvg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwZDFiMiIvPjx0ZXh0IHg9IjUwIiB5PSI2MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+JDwvdGV4dD48L3N2Zz4=";
         
+        // Manifest (Blob URLs are allowed for manifests)
+        const iconSvg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwZDFiMiIvPjx0ZXh0IHg9IjUwIiB5PSI2MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+JDwvdGV4dD48L3N2Zz4=";
         const manifest = {
             name: "Earnings Chart App",
             short_name: "Earnings",
@@ -136,18 +137,10 @@
         document.getElementById('manifest-link').href = URL.createObjectURL(manifestBlob);
         addLog('Manifest injected.', 'info');
 
-        const swCode = `
-            self.addEventListener('install', (e) => self.skipWaiting());
-            self.addEventListener('activate', (e) => self.clients.claim());
-            self.addEventListener('fetch', (e) => {
-                e.respondWith(fetch(e.request).catch(() => new Response('Offline mode not fully supported.')));
-            });
-        `;
-        const swBlob = new Blob([swCode], { type: 'application/javascript' });
-        
+        // Service Worker (Requested dynamically from Python backend to bypass blob security)
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register(URL.createObjectURL(swBlob))
-                .then(() => addLog('Virtual Service Worker registered successfully.', 'info'))
+            navigator.serviceWorker.register('/sw.js')
+                .then(() => addLog('Service Worker registered successfully.', 'info'))
                 .catch(err => addLog(`SW Registration failed: ${err.message}`, 'error'));
         }
 
