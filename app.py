@@ -36,30 +36,39 @@ def get_stock_data():
         
         # 1. Fetch Price Data (Fetch extra 3 years for EMA stabilization)
         hist = ticker.history(period=f"{years + 3}y", interval="1wk")
-        if hist.empty: return jsonify({'error': 'No price data'}), 404
+        if hist.empty: 
+            return jsonify({'error': f'No price data found for {symbol}'}), 404
+            
         hist.index = hist.index.tz_localize(None).normalize()
 
         # 2. Calculate EMAs (Exponential Moving Averages)
         hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
         hist['EMA100'] = hist['Close'].ewm(span=100, adjust=False).mean()
 
-        # 3. Fetch Earnings History
-        earnings_df = ticker.get_earnings_dates(limit=40)
-        pe_list = [None] * len(hist)
-
-        if earnings_df is not None and not earnings_df.empty:
-            if 'Reported EPS' in earnings_df.columns:
-                eps_data = earnings_df['Reported EPS'].dropna().sort_index()
-                eps_data.index = eps_data.index.tz_localize(None).normalize()
-                pe_list = []
-                for date, row in hist.iterrows():
-                    past_eps = eps_data[eps_data.index <= date]
-                    if len(past_eps) >= 4:
-                        ttm_eps = past_eps.tail(4).sum()
-                        val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
-                        pe_list.append(round(val, 2) if val else None)
-                    else:
-                        pe_list.append(None)
+        # 3. Fetch Earnings History (Wrapped in Try/Except to prevent crashes)
+        pe_list = [None] * len(hist) # Default to None if fetching fails
+        
+        try:
+            earnings_df = ticker.get_earnings_dates(limit=40)
+            if earnings_df is not None and not earnings_df.empty:
+                if 'Reported EPS' in earnings_df.columns:
+                    eps_data = earnings_df['Reported EPS'].dropna().sort_index()
+                    eps_data.index = eps_data.index.tz_localize(None).normalize()
+                    
+                    pe_list = []
+                    for date, row in hist.iterrows():
+                        past_eps = eps_data[eps_data.index <= date]
+                        if len(past_eps) >= 4:
+                            ttm_eps = past_eps.tail(4).sum()
+                            val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
+                            pe_list.append(round(val, 2) if val else None)
+                        else:
+                            pe_list.append(None)
+                else:
+                    print(f"Warning: 'Reported EPS' not found for {symbol}.")
+        except Exception as e:
+            # If Yahoo Finance API breaks or stock has no earnings, log it and continue
+            print(f"Warning: Could not fetch earnings for {symbol}. Error: {e}")
 
         hist['PE'] = pe_list
         

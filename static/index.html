@@ -58,6 +58,12 @@
                 const r = await fetch(`/api/stock?symbol=${s}&years=${y}`);
                 globalData = await r.json();
                 if (!r.ok) throw new Error(globalData.error);
+                
+                // Warn user if earnings data failed but price data succeeded
+                if (globalData.peRatios.every(val => val === null)) {
+                    addLog(`Note: P/E data unavailable for ${s}. Showing price only.`, 'warn');
+                }
+                
                 renderCharts(globalData);
                 addLog(`Success: Data for ${s} loaded.`, 'success');
             } catch (e) { addLog(`Error: ${e.message}`, 'error'); }
@@ -92,8 +98,15 @@
 
         document.getElementById('channelBtn').onclick = () => {
             if (!globalData || !ch1) return addLog("Load data first!", "warn");
-            addLog("Calculating Channel...");
+            
             const p = globalData.prices, pe = globalData.peRatios, n = p.length;
+            
+            // Safety check: Prevent channel drawing if no earnings exist
+            if (pe.every(val => val === null)) {
+                return addLog("Cannot draw channel: No P/E data available for this asset.", "error");
+            }
+
+            addLog("Calculating Channel...");
             const validPes = pe.filter(v => v !== null).sort((a,b) => a - b);
             const threshold = validPes[Math.floor(validPes.length * 0.10)];
             const candidates = [];
