@@ -1,140 +1,157 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Analysis PWA</title>
-    <link rel="manifest" href='data:application/manifest+json,{"name":"StockPE","short_name":"StockPE","start_url":"/","display":"standalone","background_color":"#1a1a1a","theme_color":"#1a1a1a","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/2422/2422796.png","sizes":"512x512","type":"image/png"}]}'>
-    <meta name="theme-color" content="#1a1a1a">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <title>Earnings PWA</title>
+    
+    <!-- Bulma CSS 1.0.2 for native Dark Mode -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Dynamic Manifest Link -->
+    <link id="manifest-link" rel="manifest">
+    
     <style>
-        body { background-color: #1a1a1a; color: #e0e0e0; min-height: 100vh; padding-bottom: 50px; }
-        .title, .label, .subtitle { color: #ffffff !important; }
-        .card { background-color: #2c2c2c; border: 1px solid #444; box-shadow: 0 4px 10px rgba(0,0,0,0.5); margin-bottom: 25px; }
-        .input { background-color: #383838; border-color: #555; color: #fff; }
-        .button.is-primary { background-color: #00d1b2; color: #1a1a1a; font-weight: bold; border: none; }
-        .button.is-warning { background-color: #ffdd57; color: #1a1a1a; font-weight: bold; margin-top: 10px; }
-        .chart-container-main { position: relative; height: 45vh; width: 100%; }
-        .chart-container-pe { position: relative; height: 25vh; width: 100%; }
-        #eventLog { height: 120px; overflow-y: auto; background-color: #000; color: #00ff00; font-family: 'Courier New', monospace; font-size: 0.8rem; padding: 10px; border: 1px solid #444; border-radius: 4px; }
-        .log-info { color: #aaa; } .log-success { color: #00d1b2; } .log-error { color: #ff3860; } .log-warn { color: #ffdd57; }
+        body { min-height: 100vh; }
+        .log-container {
+            background: #0d0d0d; color: #00ff00; padding: 12px;
+            height: 200px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; 
+            font-size: 0.9em; border-radius: 8px; margin-top: 20px; border: 1px solid #333;
+        }
+        .error-log { color: #ff4d4d; }
+        .event-log { color: #00bfff; }
+        .input { background-color: #1a1a1a; color: #fff; border-color: #4a4a4a; }
+        .input::placeholder { color: #7a7a7a; }
     </style>
 </head>
 <body>
     <section class="section">
-        <div class="container">
-            <h1 class="title has-text-centered">📈 Stock Analysis & EMA</h1>
-            <div class="columns is-centered">
-                <div class="column is-half">
-                    <div class="card p-4">
-                        <div class="field is-grouped">
-                            <p class="control is-expanded"><label class="label is-small">Ticker</label><input class="input" type="text" id="tk" value="V"></p>
-                            <p class="control" style="width: 100px;"><label class="label is-small">Years</label><input class="input" type="number" id="yr" value="5"></p>
-                            <p class="control"><label class="label is-small" style="visibility:hidden">.</label><button class="button is-primary" id="go">Load Data</button></p>
-                        </div>
-                        <button class="button is-warning is-fullwidth" id="channelBtn">Draw Price Channel</button>
-                    </div>
+        <div class="container is-max-desktop">
+            <h1 class="title has-text-centered has-text-primary">Stock Earnings Viewer PWA</h1>
+            
+            <!-- Input Area -->
+            <div class="field has-addons is-justify-content-center">
+                <div class="control">
+                    <input class="input" type="text" id="tickerInput" placeholder="Enter Ticker (e.g. AAPL)" onkeypress="handleEnter(event)">
+                </div>
+                <div class="control">
+                    <button class="button is-primary" id="fetchBtn" onclick="fetchData()">Get Earnings</button>
                 </div>
             </div>
-            <div class="card p-4"><h2 class="subtitle is-6 mb-2">Price & EMAs ($)</h2><div class="chart-container-main"><canvas id="c1"></canvas></div></div>
-            <div class="card p-4"><h2 class="subtitle is-6 mb-2">P/E Ratio (TTM)</h2><div class="chart-container-pe"><canvas id="c2"></canvas></div></div>
-            <div class="card p-4"><h2 class="subtitle is-6 mb-2">System Events</h2><div id="eventLog"></div></div>
+
+            <!-- Chart Area -->
+            <div class="box mt-5">
+                <canvas id="earningsChart"></canvas>
+            </div>
+
+            <!-- Log Area -->
+            <h2 class="subtitle mt-5 mb-2">Troubleshooting Logs</h2>
+            <div class="log-container" id="logConsole"></div>
         </div>
     </section>
 
     <script>
-        let ch1 = null, ch2 = null, globalData = null;
-        function addLog(msg, type = 'info') {
-            const l = document.getElementById('eventLog'), e = document.createElement('div');
-            e.className = `log-${type}`; e.innerHTML = `<span style="color:#666">[${new Date().toLocaleTimeString()}]</span> ${msg}`;
-            l.appendChild(e); l.scrollTop = l.scrollHeight;
+        // --- LOGGING SYSTEM ---
+        const logConsole = document.getElementById('logConsole');
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            let colorClass = type === 'error' ? 'error-log' : type === 'event' ? 'event-log' : '';
+            div.innerHTML = `<span class="${colorClass}">[${time}] [${type.toUpperCase()}] ${message}</span>`;
+            logConsole.appendChild(div);
+            logConsole.scrollTop = logConsole.scrollHeight; 
         }
 
-        document.getElementById('go').onclick = async () => {
-            const s = document.getElementById('tk').value.trim().toUpperCase(), y = document.getElementById('yr').value;
-            addLog(`Fetching ${s}...`); document.getElementById('go').classList.add('is-loading');
-            try {
-                const r = await fetch(`/api/stock?symbol=${s}&years=${y}`);
-                globalData = await r.json();
-                if (!r.ok) throw new Error(globalData.error);
-                
-                // Warn user if earnings data failed but price data succeeded
-                if (globalData.peRatios.every(val => val === null)) {
-                    addLog(`Note: P/E data unavailable for ${s}. Showing price only.`, 'warn');
-                }
-                
-                renderCharts(globalData);
-                addLog(`Success: Data for ${s} loaded.`, 'success');
-            } catch (e) { addLog(`Error: ${e.message}`, 'error'); }
-            finally { document.getElementById('go').classList.remove('is-loading'); }
-        };
+        // --- CHART SYSTEM ---
+        Chart.defaults.color = '#a0a0a0'; 
+        let earningsChart = null;
+        
+        function renderChart(data) {
+            const ctx = document.getElementById('earningsChart').getContext('2d');
+            if (earningsChart) earningsChart.destroy(); 
 
-        function renderCharts(d) {
-            Chart.defaults.color = '#999'; Chart.defaults.borderColor = '#333';
-            const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: true, labels: { color: '#fff', boxWidth: 12 } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#333' } } } };
-
-            if (ch1) ch1.destroy();
-            ch1 = new Chart(document.getElementById('c1'), {
+            addLog(`Rendering chart for ${data.ticker}`, 'event');
+            earningsChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: d.labels,
+                    labels: data.dates,
                     datasets: [
-                        { id: 'mainPrice', label: 'Price', data: d.prices, borderColor: '#00d1b2', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.1 },
-                        { label: '50wk EMA', data: d.ema50, borderColor: '#ffffff', borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.1 },
-                        { label: '100wk EMA', data: d.ema100, borderColor: '#ff3860', borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.1 }
+                        { label: 'Reported EPS', data: data.reported, borderColor: '#00d1b2', backgroundColor: '#00d1b2', tension: 0.1 },
+                        { label: 'Estimated EPS', data: data.estimate, borderColor: '#ffdd57', backgroundColor: '#ffdd57', borderDash: [5, 5], tension: 0.1 }
                     ]
                 },
-                options: opt
-            });
-
-            if (ch2) ch2.destroy();
-            ch2 = new Chart(document.getElementById('c2'), {
-                type: 'line',
-                data: { labels: d.labels, datasets: [{ label: 'P/E TTM', data: d.peRatios, borderColor: '#ffe08a', borderWidth: 2, pointRadius: 0 }] },
-                options: { ...opt, plugins: { legend: { display: false } } }
+                options: { 
+                    responsive: true, 
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        x: { grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                        y: { grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                    }
+                }
             });
         }
 
-        document.getElementById('channelBtn').onclick = () => {
-            if (!globalData || !ch1) return addLog("Load data first!", "warn");
-            
-            const p = globalData.prices, pe = globalData.peRatios, n = p.length;
-            
-            // Safety check: Prevent channel drawing if no earnings exist
-            if (pe.every(val => val === null)) {
-                return addLog("Cannot draw channel: No P/E data available for this asset.", "error");
-            }
+        // --- API FETCHING ---
+        async function fetchData() {
+            const ticker = document.getElementById('tickerInput').value.trim();
+            const btn = document.getElementById('fetchBtn');
+            if (!ticker) return addLog('Please enter a ticker symbol.', 'error');
 
-            addLog("Calculating Channel...");
-            const validPes = pe.filter(v => v !== null).sort((a,b) => a - b);
-            const threshold = validPes[Math.floor(validPes.length * 0.10)];
-            const candidates = [];
-            for(let i=0; i<n; i++) if(pe[i] !== null && pe[i] <= threshold) candidates.push(i);
+            btn.classList.add('is-loading');
+            addLog(`Initiating API request for ticker: ${ticker}`, 'event');
 
-            let bS = 0, bI = 0, maxH = -1;
-            for(let i=0; i < candidates.length; i++) {
-                for(let j=i+1; j < candidates.length; j++) {
-                    const idx1 = candidates[i], idx2 = candidates[j];
-                    const slope = (p[idx2] - p[idx1]) / (idx2 - idx1), inter = p[idx1] - (slope * idx1);
-                    let hits = 0;
-                    candidates.forEach(k => { if(Math.abs(p[k] - (slope*k + inter)) < p[k] * 0.02) hits++; });
-                    if(hits > maxH) { maxH = hits; bS = slope; bI = inter; }
+            try {
+                const response = await fetch(`/api/earnings/${ticker}`);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || 'Failed to fetch data');
                 }
+                const data = await response.json();
+                addLog(`Data received successfully for ${ticker}. Dates: ${data.dates.length}`, 'info');
+                renderChart(data);
+            } catch (error) {
+                addLog(`API Error: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('is-loading');
             }
-            let maxU = -Infinity;
-            for(let i=0; i<n; i++) { let curr = p[i] - (bS * i); if(curr > maxU) maxU = curr; }
+        }
 
-            // Re-render price chart but keep EMAs
-            const style = { pointRadius:0, borderWidth:1, borderDash:[5,5], fill:false, tension:0 };
-            ch1.data.datasets = ch1.data.datasets.filter(ds => !ds.label.includes('Support') && !ds.label.includes('Resistance'));
-            ch1.data.datasets.push({ label: 'Support', data: p.map((_, i) => (bS * i) + bI), borderColor: '#ffdd57', ...style });
-            ch1.data.datasets.push({ label: 'Resistance', data: p.map((_, i) => (bS * i) + maxU), borderColor: '#ffdd57', ...style });
-            ch1.update();
-            addLog(`Channel drawn based on ${maxH} low-P/E hits.`, 'success');
+        function handleEnter(e) { if (e.key === 'Enter') fetchData(); }
+
+        // --- 1-FILE PWA HACK ---
+        addLog('Initializing 1-file PWA setup...', 'event');
+        const iconSvg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwZDFiMiIvPjx0ZXh0IHg9IjUwIiB5PSI2MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+JDwvdGV4dD48L3N2Zz4=";
+        
+        const manifest = {
+            name: "Earnings Chart App",
+            short_name: "Earnings",
+            start_url: "/",
+            display: "standalone",
+            background_color: "#121212", 
+            theme_color: "#121212",      
+            icons: [{ src: iconSvg, sizes: "192x192 512x512", type: "image/svg+xml", purpose: "any maskable" }]
         };
+        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+        document.getElementById('manifest-link').href = URL.createObjectURL(manifestBlob);
+        addLog('Manifest injected.', 'info');
 
-        if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+        const swCode = `
+            self.addEventListener('install', (e) => self.skipWaiting());
+            self.addEventListener('activate', (e) => self.clients.claim());
+            self.addEventListener('fetch', (e) => {
+                e.respondWith(fetch(e.request).catch(() => new Response('Offline mode not fully supported.')));
+            });
+        `;
+        const swBlob = new Blob([swCode], { type: 'application/javascript' });
+        
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register(URL.createObjectURL(swBlob))
+                .then(() => addLog('Virtual Service Worker registered successfully.', 'info'))
+                .catch(err => addLog(`SW Registration failed: ${err.message}`, 'error'));
+        }
+
+        addLog('Application ready.', 'event');
     </script>
 </body>
 </html>

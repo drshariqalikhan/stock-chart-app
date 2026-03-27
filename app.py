@@ -1,96 +1,157 @@
-import os
-from flask import Flask, jsonify, request, send_from_directory, Response
-from flask_cors import CORS
-import yfinance as yf
-import pandas as pd
-import numpy as np
-
-app = Flask(__name__, static_folder='static')
-CORS(app)
-
-SW_CODE = """
-const CACHE_NAME = 'stock-pe-v1';
-const ASSETS = ['/', '/index.html'];
-self.addEventListener('install', (e) => {
-    e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS)));
-});
-self.addEventListener('fetch', (e) => {
-    if (e.request.url.includes('/api/')) {
-        e.respondWith(fetch(e.request));
-    } else {
-        e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-    }
-});
-"""
-
-@app.route('/sw.js')
-def serve_sw():
-    return Response(SW_CODE, mimetype='application/javascript')
-
-@app.route('/api/stock')
-def get_stock_data():
-    try:
-        symbol = request.args.get('symbol', 'AAPL').upper()
-        years = int(request.args.get('years', '3'))
-        ticker = yf.Ticker(symbol)
-        
-        # 1. Fetch Price Data (Fetch extra 3 years for EMA stabilization)
-        hist = ticker.history(period=f"{years + 3}y", interval="1wk")
-        if hist.empty: 
-            return jsonify({'error': f'No price data found for {symbol}'}), 404
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Earnings PWA</title>
+    
+    <!-- Bulma CSS 1.0.2 for native Dark Mode -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Dynamic Manifest Link -->
+    <link id="manifest-link" rel="manifest">
+    
+    <style>
+        body { min-height: 100vh; }
+        .log-container {
+            background: #0d0d0d; color: #00ff00; padding: 12px;
+            height: 200px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; 
+            font-size: 0.9em; border-radius: 8px; margin-top: 20px; border: 1px solid #333;
+        }
+        .error-log { color: #ff4d4d; }
+        .event-log { color: #00bfff; }
+        .input { background-color: #1a1a1a; color: #fff; border-color: #4a4a4a; }
+        .input::placeholder { color: #7a7a7a; }
+    </style>
+</head>
+<body>
+    <section class="section">
+        <div class="container is-max-desktop">
+            <h1 class="title has-text-centered has-text-primary">Stock Earnings Viewer PWA</h1>
             
-        hist.index = hist.index.tz_localize(None).normalize()
+            <!-- Input Area -->
+            <div class="field has-addons is-justify-content-center">
+                <div class="control">
+                    <input class="input" type="text" id="tickerInput" placeholder="Enter Ticker (e.g. AAPL)" onkeypress="handleEnter(event)">
+                </div>
+                <div class="control">
+                    <button class="button is-primary" id="fetchBtn" onclick="fetchData()">Get Earnings</button>
+                </div>
+            </div>
 
-        # 2. Calculate EMAs (Exponential Moving Averages)
-        hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
-        hist['EMA100'] = hist['Close'].ewm(span=100, adjust=False).mean()
+            <!-- Chart Area -->
+            <div class="box mt-5">
+                <canvas id="earningsChart"></canvas>
+            </div>
 
-        # 3. Fetch Earnings History (Wrapped in Try/Except to prevent crashes)
-        pe_list = [None] * len(hist) # Default to None if fetching fails
+            <!-- Log Area -->
+            <h2 class="subtitle mt-5 mb-2">Troubleshooting Logs</h2>
+            <div class="log-container" id="logConsole"></div>
+        </div>
+    </section>
+
+    <script>
+        // --- LOGGING SYSTEM ---
+        const logConsole = document.getElementById('logConsole');
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            let colorClass = type === 'error' ? 'error-log' : type === 'event' ? 'event-log' : '';
+            div.innerHTML = `<span class="${colorClass}">[${time}] [${type.toUpperCase()}] ${message}</span>`;
+            logConsole.appendChild(div);
+            logConsole.scrollTop = logConsole.scrollHeight; 
+        }
+
+        // --- CHART SYSTEM ---
+        Chart.defaults.color = '#a0a0a0'; 
+        let earningsChart = null;
         
-        try:
-            earnings_df = ticker.get_earnings_dates(limit=40)
-            if earnings_df is not None and not earnings_df.empty:
-                if 'Reported EPS' in earnings_df.columns:
-                    eps_data = earnings_df['Reported EPS'].dropna().sort_index()
-                    eps_data.index = eps_data.index.tz_localize(None).normalize()
-                    
-                    pe_list = []
-                    for date, row in hist.iterrows():
-                        past_eps = eps_data[eps_data.index <= date]
-                        if len(past_eps) >= 4:
-                            ttm_eps = past_eps.tail(4).sum()
-                            val = row['Close'] / ttm_eps if (ttm_eps and ttm_eps > 0) else None
-                            pe_list.append(round(val, 2) if val else None)
-                        else:
-                            pe_list.append(None)
-                else:
-                    print(f"Warning: 'Reported EPS' not found for {symbol}.")
-        except Exception as e:
-            # If Yahoo Finance API breaks or stock has no earnings, log it and continue
-            print(f"Warning: Could not fetch earnings for {symbol}. Error: {e}")
+        function renderChart(data) {
+            const ctx = document.getElementById('earningsChart').getContext('2d');
+            if (earningsChart) earningsChart.destroy(); 
 
-        hist['PE'] = pe_list
+            addLog(`Rendering chart for ${data.ticker}`, 'event');
+            earningsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.dates,
+                    datasets: [
+                        { label: 'Reported EPS', data: data.reported, borderColor: '#00d1b2', backgroundColor: '#00d1b2', tension: 0.1 },
+                        { label: 'Estimated EPS', data: data.estimate, borderColor: '#ffdd57', backgroundColor: '#ffdd57', borderDash: [5, 5], tension: 0.1 }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        x: { grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                        y: { grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                    }
+                }
+            });
+        }
+
+        // --- API FETCHING ---
+        async function fetchData() {
+            const ticker = document.getElementById('tickerInput').value.trim();
+            const btn = document.getElementById('fetchBtn');
+            if (!ticker) return addLog('Please enter a ticker symbol.', 'error');
+
+            btn.classList.add('is-loading');
+            addLog(`Initiating API request for ticker: ${ticker}`, 'event');
+
+            try {
+                const response = await fetch(`/api/earnings/${ticker}`);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || 'Failed to fetch data');
+                }
+                const data = await response.json();
+                addLog(`Data received successfully for ${ticker}. Dates: ${data.dates.length}`, 'info');
+                renderChart(data);
+            } catch (error) {
+                addLog(`API Error: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('is-loading');
+            }
+        }
+
+        function handleEnter(e) { if (e.key === 'Enter') fetchData(); }
+
+        // --- 1-FILE PWA HACK ---
+        addLog('Initializing 1-file PWA setup...', 'event');
+        const iconSvg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwZDFiMiIvPjx0ZXh0IHg9IjUwIiB5PSI2MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+JDwvdGV4dD48L3N2Zz4=";
         
-        # 4. Final Filtering for selected years
-        cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
-        final_df = hist[hist.index >= cutoff].replace({np.nan: None})
+        const manifest = {
+            name: "Earnings Chart App",
+            short_name: "Earnings",
+            start_url: "/",
+            display: "standalone",
+            background_color: "#121212", 
+            theme_color: "#121212",      
+            icons: [{ src: iconSvg, sizes: "192x192 512x512", type: "image/svg+xml", purpose: "any maskable" }]
+        };
+        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+        document.getElementById('manifest-link').href = URL.createObjectURL(manifestBlob);
+        addLog('Manifest injected.', 'info');
 
-        return jsonify({
-            'labels': final_df.index.strftime('%Y-%m-%d').tolist(),
-            'prices': final_df['Close'].round(2).tolist(),
-            'ema50': final_df['EMA50'].round(2).tolist(),
-            'ema100': final_df['EMA100'].round(2).tolist(),
-            'peRatios': final_df['PE'].tolist()
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        const swCode = `
+            self.addEventListener('install', (e) => self.skipWaiting());
+            self.addEventListener('activate', (e) => self.clients.claim());
+            self.addEventListener('fetch', (e) => {
+                e.respondWith(fetch(e.request).catch(() => new Response('Offline mode not fully supported.')));
+            });
+        `;
+        const swBlob = new Blob([swCode], { type: 'application/javascript' });
+        
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register(URL.createObjectURL(swBlob))
+                .then(() => addLog('Virtual Service Worker registered successfully.', 'info'))
+                .catch(err => addLog(`SW Registration failed: ${err.message}`, 'error'));
+        }
 
-@app.route('/')
-@app.route('/index.html')
-def serve_index():
-    return send_from_directory(app.static_folder, 'index.html')
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+        addLog('Application ready.', 'event');
+    </script>
+</body>
+</html>

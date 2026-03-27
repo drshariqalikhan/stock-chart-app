@@ -1,7 +1,4 @@
-flask
-flask-cors
-yfinance>=0.2.36
+fastapi
+uvicorn
+yfinance
 pandas
-gunicorn
-numpy
-lxml
