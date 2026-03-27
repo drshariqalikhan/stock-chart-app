@@ -1,157 +1,84 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Earnings PWA</title>
+import logging
+import yfinance as yf
+import pandas as pd
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+# Allow CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    """Serves the single-file PWA from the static folder."""
+    logger.info("Event: Frontend requested.")
+    file_path = os.path.join("static", "index.html")
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"Error: {file_path} not found.")
+        raise HTTPException(status_code=404, detail="Frontend file not found.")
+
+@app.get("/api/earnings/{ticker}")
+async def get_earnings(ticker: str):
+    """Fetches historical earnings data for the given ticker."""
+    ticker = ticker.upper()
+    logger.info(f"Event: Fetching earnings data for {ticker}")
     
-    <!-- Bulma CSS 1.0.2 for native Dark Mode -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Dynamic Manifest Link -->
-    <link id="manifest-link" rel="manifest">
-    
-    <style>
-        body { min-height: 100vh; }
-        .log-container {
-            background: #0d0d0d; color: #00ff00; padding: 12px;
-            height: 200px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; 
-            font-size: 0.9em; border-radius: 8px; margin-top: 20px; border: 1px solid #333;
-        }
-        .error-log { color: #ff4d4d; }
-        .event-log { color: #00bfff; }
-        .input { background-color: #1a1a1a; color: #fff; border-color: #4a4a4a; }
-        .input::placeholder { color: #7a7a7a; }
-    </style>
-</head>
-<body>
-    <section class="section">
-        <div class="container is-max-desktop">
-            <h1 class="title has-text-centered has-text-primary">Stock Earnings Viewer PWA</h1>
-            
-            <!-- Input Area -->
-            <div class="field has-addons is-justify-content-center">
-                <div class="control">
-                    <input class="input" type="text" id="tickerInput" placeholder="Enter Ticker (e.g. AAPL)" onkeypress="handleEnter(event)">
-                </div>
-                <div class="control">
-                    <button class="button is-primary" id="fetchBtn" onclick="fetchData()">Get Earnings</button>
-                </div>
-            </div>
-
-            <!-- Chart Area -->
-            <div class="box mt-5">
-                <canvas id="earningsChart"></canvas>
-            </div>
-
-            <!-- Log Area -->
-            <h2 class="subtitle mt-5 mb-2">Troubleshooting Logs</h2>
-            <div class="log-container" id="logConsole"></div>
-        </div>
-    </section>
-
-    <script>
-        // --- LOGGING SYSTEM ---
-        const logConsole = document.getElementById('logConsole');
-        function addLog(message, type = 'info') {
-            const time = new Date().toLocaleTimeString();
-            const div = document.createElement('div');
-            let colorClass = type === 'error' ? 'error-log' : type === 'event' ? 'event-log' : '';
-            div.innerHTML = `<span class="${colorClass}">[${time}] [${type.toUpperCase()}] ${message}</span>`;
-            logConsole.appendChild(div);
-            logConsole.scrollTop = logConsole.scrollHeight; 
-        }
-
-        // --- CHART SYSTEM ---
-        Chart.defaults.color = '#a0a0a0'; 
-        let earningsChart = null;
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.get_earnings_dates(limit=12)
         
-        function renderChart(data) {
-            const ctx = document.getElementById('earningsChart').getContext('2d');
-            if (earningsChart) earningsChart.destroy(); 
+        if df is None or df.empty:
+            raise ValueError(f"No earnings data available for {ticker}.")
 
-            addLog(`Rendering chart for ${data.ticker}`, 'event');
-            earningsChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.dates,
-                    datasets: [
-                        { label: 'Reported EPS', data: data.reported, borderColor: '#00d1b2', backgroundColor: '#00d1b2', tension: 0.1 },
-                        { label: 'Estimated EPS', data: data.estimate, borderColor: '#ffdd57', backgroundColor: '#ffdd57', borderDash: [5, 5], tension: 0.1 }
-                    ]
-                },
-                options: { 
-                    responsive: true, 
-                    plugins: { legend: { position: 'top' } },
-                    scales: {
-                        x: { grid: { color: 'rgba(255, 255, 255, 0.1)' } },
-                        y: { grid: { color: 'rgba(255, 255, 255, 0.1)' } }
-                    }
-                }
-            });
-        }
+        # Yahoo Finance often changes its formatting. 
+        # We check if the expected columns exist to prevent crashes.
+        if 'Reported EPS' not in df.columns or 'EPS Estimate' not in df.columns:
+            raise ValueError(f"Yahoo Finance is missing EPS columns for {ticker}.")
 
-        // --- API FETCHING ---
-        async function fetchData() {
-            const ticker = document.getElementById('tickerInput').value.trim();
-            const btn = document.getElementById('fetchBtn');
-            if (!ticker) return addLog('Please enter a ticker symbol.', 'error');
-
-            btn.classList.add('is-loading');
-            addLog(`Initiating API request for ticker: ${ticker}`, 'event');
-
-            try {
-                const response = await fetch(`/api/earnings/${ticker}`);
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.detail || 'Failed to fetch data');
-                }
-                const data = await response.json();
-                addLog(`Data received successfully for ${ticker}. Dates: ${data.dates.length}`, 'info');
-                renderChart(data);
-            } catch (error) {
-                addLog(`API Error: ${error.message}`, 'error');
-            } finally {
-                btn.classList.remove('is-loading');
-            }
-        }
-
-        function handleEnter(e) { if (e.key === 'Enter') fetchData(); }
-
-        // --- 1-FILE PWA HACK ---
-        addLog('Initializing 1-file PWA setup...', 'event');
-        const iconSvg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwZDFiMiIvPjx0ZXh0IHg9IjUwIiB5PSI2MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+JDwvdGV4dD48L3N2Zz4=";
+        # Safely clean the data
+        df = df.dropna(subset=['Reported EPS', 'EPS Estimate'])
         
-        const manifest = {
-            name: "Earnings Chart App",
-            short_name: "Earnings",
-            start_url: "/",
-            display: "standalone",
-            background_color: "#121212", 
-            theme_color: "#121212",      
-            icons: [{ src: iconSvg, sizes: "192x192 512x512", type: "image/svg+xml", purpose: "any maskable" }]
-        };
-        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-        document.getElementById('manifest-link').href = URL.createObjectURL(manifestBlob);
-        addLog('Manifest injected.', 'info');
+        if df.empty:
+             raise ValueError(f"Earnings data for {ticker} contains blank values.")
 
-        const swCode = `
-            self.addEventListener('install', (e) => self.skipWaiting());
-            self.addEventListener('activate', (e) => self.clients.claim());
-            self.addEventListener('fetch', (e) => {
-                e.respondWith(fetch(e.request).catch(() => new Response('Offline mode not fully supported.')));
-            });
-        `;
-        const swBlob = new Blob([swCode], { type: 'application/javascript' });
+        df = df.sort_index() # Sort chronologically
         
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register(URL.createObjectURL(swBlob))
-                .then(() => addLog('Virtual Service Worker registered successfully.', 'info'))
-                .catch(err => addLog(`SW Registration failed: ${err.message}`, 'error'));
+        # Extract data to lists
+        dates = df.index.strftime('%Y-%m-%d').tolist()
+        reported_eps = df['Reported EPS'].tolist()
+        estimated_eps = df['EPS Estimate'].tolist()
+
+        logger.info(f"Event: Successfully retrieved {len(dates)} records for {ticker}")
+        
+        return {
+            "ticker": ticker,
+            "dates": dates,
+            "reported": reported_eps,
+            "estimate": estimated_eps
         }
 
-        addLog('Application ready.', 'event');
-    </script>
-</body>
-</html>
+    except Exception as e:
+        # Instead of crashing the server, gracefully send the error to the UI logs
+        error_msg = str(e)
+        logger.error(f"Error fetching data for {ticker}: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
